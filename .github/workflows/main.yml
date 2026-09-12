@@ -1,0 +1,38 @@
+name: Sprawdz oferty iPhone
+
+on:
+  schedule:
+    # co 1 minute - to minimalny odstep jaki obsluguje GitHub Actions.
+    # UWAGA: przy duzym obciazeniu GitHub i tak moze to odpalac rzadziej
+    # (np. co 3-5 min) - nie ma gwarancji dokladnie co minute.
+    - cron: "* * * * *"
+  workflow_dispatch: {}  # pozwala odpalic recznie z zakladki Actions
+
+permissions:
+  contents: write  # potrzebne, zeby workflow mogl zapisac seen_ids.json
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Zainstaluj zaleznosci
+        run: pip install -r requirements.txt
+
+      - name: Sprawdz nowe oferty i wyslij na Discorda
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: python check_offers.py
+
+      - name: Zapisz stan (seen_ids.json)
+        run: |
+          git config user.name "offer-bot"
+          git config user.email "offer-bot@users.noreply.github.com"
+          git add seen_ids.json
+          git diff --cached --quiet || git commit -m "Aktualizacja listy widzianych ofert"
+          git push
