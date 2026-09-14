@@ -1,29 +1,29 @@
 """
 Bot sprawdzajacy nowe oferty (iPhone 11+, PS3, PS4) na OLX i Vinted
 i wysylajacy powiadomienia na Discorda (przez webhook).
-
+ 
 Uruchamiany cyklicznie przez GitHub Actions - patrz
 .github/workflows/check.yml. Stan "juz widzianych" ofert trzymany jest
 w pliku seen_ids.json, ktory workflow commituje z powrotem do repo.
-
+ 
 Do pobierania z OLX/Vinted uzywamy curl_cffi zamiast zwyklego requests,
 bo ono podszywa sie pod prawdziwa przegladarke na poziomie polaczenia
 (TLS), co pozwala ominac blokady antybotowe (403/404) ktore dostaje
 zwykly requests nawet z poprawnym naglowkiem User-Agent. Do Discorda
 zostaje zwykly requests - tam takich blokad nie ma.
 """
-
+ 
 import os
 import re
 import json
 import time
 import requests
 from curl_cffi import requests as curl_requests
-
+ 
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 SEEN_FILE = "seen_ids.json"
 MAX_SEEN_PER_SOURCE = 800
-
+ 
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -32,7 +32,7 @@ HEADERS = {
     "Accept": "application/json, text/plain, */*",
     "Accept-Language": "pl-PL,pl;q=0.9,en-US;q=0.8,en;q=0.7",
 }
-
+ 
 # Wspolne dla wszystkich profili wykluczenia "samych akcesoriow" -
 # ogloszenia z tymi slowami w tytule odpadaja, nawet jesli pasuja do
 # wzorca modelu (np. "Etui na iPhone 13" zostanie odrzucone).
@@ -40,13 +40,22 @@ ACCESSORY_EXCLUDE = (
     r"etui|case|obudow|pokrowiec|szk[łl]o|szyb[ka]|folia|hartowan|"
     r"silikon|\bżel\b|\bzel\b|ładowark|ladowark|\bkabel\b|słuchawk|"
     r"sluchawk|powerbank|power\s*bank|adapter|rysik|smycz|\bpasek\b|"
-    r"uchwyt|stacja\s*dok|zasilacz"
+    r"uchwyt|stacja\s*dok|zasilacz|osłon|oslon|magsafe|portfel|"
+    # znane marki/linie produktow ktore w praktyce ZAWSZE oznaczaja
+    # akcesorium (etui/szkło), nawet jesli nie ma slowa "etui" w tytule
+    r"spigen|tech-?protect|uniq\b|ringke|nillkin|crong|alogy|3mk|"
+    r"mercury\b|forcell|wozinsky|puro\b|esr\b|karl\s*lagerfeld|"
+    r"guess\b|ferrari\b|ugreen|baseus|joyroom"
 )
-
+ 
 # Dodatkowe wykluczenia typowe dla konsol - same gry/pady/piloty, bez
-# samej konsoli, nas nie interesuja.
-CONSOLE_EXTRA_EXCLUDE = r"\bgra\b|\bgry\b|\bpad\b|pady\b|kontroler|\bpilot\b"
-
+# samej konsoli, nas nie interesuja. Bez koncowego \b przy pad/kontroler/
+# pilot, zeby lapac tez polskie odmiany ("pada", "pady", "padow",
+# "kontrolera"). Celowo NIE wykluczamy "gier" (liczba mnoga dopelniacza) -
+# to psuloby ogloszenia typu "konsola + 20 gier", ktore SA tym czego
+# szukamy; wykluczamy tylko wyrazna sprzedaz samej gry/gier w mianowniku.
+CONSOLE_EXTRA_EXCLUDE = r"\bgra\b|\bgry\b|\bpad\w*|kontroler|\bpilot"
+ 
 PROFILES = [
     {
         "key": "iphone",
@@ -76,8 +85,8 @@ PROFILES = [
         ),
     },
 ]
-
-
+ 
+ 
 def load_seen():
     if os.path.exists(SEEN_FILE):
         try:
@@ -86,15 +95,15 @@ def load_seen():
         except json.JSONDecodeError:
             pass
     return {"olx": [], "vinted": []}
-
-
+ 
+ 
 def save_seen(seen):
     for key in seen:
         seen[key] = seen[key][-MAX_SEEN_PER_SOURCE:]
     with open(SEEN_FILE, "w", encoding="utf-8") as f:
         json.dump(seen, f, ensure_ascii=False, indent=2)
-
-
+ 
+ 
 def passes_filters(title, profile):
     title = title or ""
     if not profile["include"].search(title):
@@ -102,8 +111,8 @@ def passes_filters(title, profile):
     if profile["exclude"].search(title):
         return False
     return True
-
-
+ 
+ 
 def fetch_olx(profile):
     """Nowe oferty z OLX (najnowsze pierwsze) pasujace do profilu."""
     url = "https://www.olx.pl/api/v1/offers/"
@@ -126,24 +135,24 @@ def fetch_olx(profile):
     except Exception as e:
         print(f"[OLX/{profile['key']}] Blad pobierania: {e}")
         return []
-
+ 
     results = []
     for item in data:
         title = item.get("title", "")
         if not passes_filters(title, profile):
             continue
-
+ 
         price_raw = item.get("price")
         price_value = None
         if isinstance(price_raw, dict):
             inner = price_raw.get("value")
             price_value = inner.get("value") if isinstance(inner, dict) else inner
-
+ 
         photos = item.get("photos") or []
         image = photos[0].get("link") if photos else None
         if image:
             image = image.replace("{width}", "512").replace("{height}", "512")
-
+ 
         results.append(
             {
                 "id": f"olx_{item.get('id')}",
@@ -157,22 +166,41 @@ def fetch_olx(profile):
             }
         )
     return results
-
-
+ 
+ 
 def fetch_vinted(profile):
     """Nowe oferty z Vinted (najnowsze pierwsze) pasujace do profilu."""
+    search_page = f"https://www.vinted.pl/catalog?search_text={profile['query']}"
+ 
     session = curl_requests.Session(impersonate="chrome124")
     session.headers.update(HEADERS)
     try:
-        # Vinted wymaga wczesniejszego wejscia na strone glowna, zeby zalozyc
-        # sesje/ciasteczka - bez tego API zwraca blad.
+        # Krok 1: wejscie na strone glowna - zaklada podstawowa sesje.
         session.get("https://www.vinted.pl/", timeout=20)
+ 
+        # Krok 2: wejscie na sama strone wynikow wyszukiwania (nie samo API) -
+        # dokladnie to robi przegladarka realnego uzytkownika zanim
+        # wewnetrzny JS odpali zapytanie do API, i to zazwyczaj dostawia
+        # dodatkowe ciasteczka wymagane przez zabezpieczenia antybotowe.
+        session.get(search_page, timeout=20)
+ 
+        # Krok 3: dopiero teraz zapytanie do API, z Referer/Origin
+        # wskazujacym na strone wynikow (WAF-y czesto to sprawdzaja).
         resp = session.get(
             "https://www.vinted.pl/api/v2/catalog/items",
             params={
                 "search_text": profile["query"],
                 "order": "newest_first",
                 "per_page": 40,
+            },
+            headers={
+                "Referer": search_page,
+                "Origin": "https://www.vinted.pl",
+                "Accept": "application/json, text/plain, */*",
+                "Sec-Fetch-Mode": "cors",
+                "Sec-Fetch-Site": "same-origin",
+                "Sec-Fetch-Dest": "empty",
+                "X-Requested-With": "XMLHttpRequest",
             },
             timeout=20,
         )
@@ -181,19 +209,19 @@ def fetch_vinted(profile):
     except Exception as e:
         print(f"[Vinted/{profile['key']}] Blad pobierania: {e}")
         return []
-
+ 
     results = []
     for item in data:
         title = item.get("title", "")
         if not passes_filters(title, profile):
             continue
-
+ 
         price_obj = item.get("price") or item.get("total_item_price") or {}
         price_value = price_obj.get("amount") if isinstance(price_obj, dict) else None
-
+ 
         photo = item.get("photo") or {}
         image = photo.get("url") if isinstance(photo, dict) else None
-
+ 
         results.append(
             {
                 "id": f"vinted_{item.get('id')}",
@@ -207,13 +235,13 @@ def fetch_vinted(profile):
             }
         )
     return results
-
-
+ 
+ 
 def send_discord(offer):
     if not DISCORD_WEBHOOK_URL:
         print("Brak DISCORD_WEBHOOK_URL - pomijam wysylke:", offer["title"])
         return
-
+ 
     price_txt = f"{offer['price']} zl" if offer["price"] else "brak ceny w ogloszeniu"
     embed = {
         "title": offer["title"][:250],
@@ -223,7 +251,7 @@ def send_discord(offer):
     }
     if offer.get("image"):
         embed["thumbnail"] = {"url": offer["image"]}
-
+ 
     try:
         r = requests.post(DISCORD_WEBHOOK_URL, json={"embeds": [embed]}, timeout=15)
         if r.status_code >= 300:
@@ -231,16 +259,16 @@ def send_discord(offer):
     except Exception as e:
         print(f"Blad wysylki do Discorda: {e}")
     time.sleep(1)  # zapas na limit webhookow Discorda
-
-
+ 
+ 
 def main():
     seen = load_seen()
     all_new = []
-
+ 
     for source_key, fetch_fn in (("olx", fetch_olx), ("vinted", fetch_vinted)):
         seen_ids = set(seen.get(source_key, []))
         seen.setdefault(source_key, [])
-
+ 
         for profile in PROFILES:
             offers = fetch_fn(profile)
             new_offers = [o for o in offers if o["id"] not in seen_ids]
@@ -252,16 +280,16 @@ def main():
                 seen[source_key].append(o["id"])
                 seen_ids.add(o["id"])
             all_new.extend(new_offers)
-
+ 
     # Wysylamy od najstarszej do najnowszej, zeby kolejnosc wiadomosci na
     # Discordzie byla chronologiczna (najnowsza oferta na koncu/na dole).
     all_new.sort(key=lambda o: o.get("created") or "")
     for offer in all_new:
         send_discord(offer)
-
+ 
     save_seen(seen)
     print(f"Gotowe. Wyslano {len(all_new)} nowych ofert.")
-
-
+ 
+ 
 if __name__ == "__main__":
     main()
