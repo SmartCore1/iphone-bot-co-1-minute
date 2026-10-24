@@ -413,10 +413,10 @@ def send_dashboard(offers):
         "Content-Type": "application/json",
     }
     try:
-        # Paczkami po 100 (API przyjmuje max 200 naraz).
-        for i in range(0, len(payload["deals"]), 100):
-            chunk = {"deals": payload["deals"][i:i + 100]}
-            r = requests.post(f"{DASHBOARD_URL}/api/deals", json=chunk, headers=headers, timeout=20, allow_redirects=False)
+        # Paczkami po 50 (API przyjmuje max 200 naraz; mniejsze paczki = szybsza odpowiedz).
+        for i in range(0, len(payload["deals"]), 50):
+            chunk = {"deals": payload["deals"][i:i + 50]}
+            r = requests.post(f"{DASHBOARD_URL}/api/deals", json=chunk, headers=headers, timeout=60, allow_redirects=False)
             if r.status_code >= 300:
                 print(f"Panel error {r.status_code}: {r.text[:300]}")
                 return set()
@@ -535,7 +535,7 @@ def cleanup_unavailable():
         gone |= vinted_gone_ids(vinted[:VINTED_CHECKS_PER_RUN])
         if gone:
             body = {"deals": [{"id": i, "status": "zakonczone", "reason": GONE_REASON} for i in gone]}
-            r = requests.post(f"{DASHBOARD_URL}/api/deals", json=body, headers=_dashboard_headers(), timeout=20, allow_redirects=False)
+            r = requests.post(f"{DASHBOARD_URL}/api/deals", json=body, headers=_dashboard_headers(), timeout=60, allow_redirects=False)
             print(f"Panel: zdjeto {len(gone)} niedostepnych okazji (HTTP {r.status_code})")
         else:
             print(f"Panel: sprawdzono {len(deals)} okazji - wszystkie dostepne")
