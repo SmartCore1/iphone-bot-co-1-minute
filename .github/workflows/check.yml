@@ -12,6 +12,11 @@ on:
 permissions:
   contents: write  # potrzebne, zeby workflow mogl zapisac seen_ids.json
 
+# Jedno uruchomienie naraz - dwa rownolegle nadpisywalyby sobie seen_ids.json.
+concurrency:
+  group: sprawdz-oferty
+  cancel-in-progress: false
+
 jobs:
   check:
     runs-on: ubuntu-latest
@@ -48,4 +53,11 @@ jobs:
           git config user.email "offer-bot@users.noreply.github.com"
           git add seen_ids.json
           git diff --cached --quiet || git commit -m "Aktualizacja listy widzianych ofert"
-          git push
+          # Jesli w trakcie dzialania bota ktos wypchnal zmiany (np. nowy kod),
+          # dociagamy je i wypychamy ponownie. Przy konflikcie w seen_ids.json
+          # wygrywa wersja z tego uruchomienia (-X theirs = nasz commit).
+          for i in 1 2 3; do
+            git pull --rebase -X theirs origin "${GITHUB_REF_NAME}" && git push && exit 0
+            sleep 5
+          done
+          exit 1
