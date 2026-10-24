@@ -58,6 +58,11 @@ Discorda.
   na zywo z tego srodowiska (brak dostepu sieciowego do tych domen), wiec
   jesli po uruchomieniu logi pokaza blad (np. 403/401) albo 0 wynikow,
   daj znac z tresci bledu z logu - dostosujemy naglowki/endpoint.
+- **Jak dziala harmonogram (od 24.10.2026).** Sam cron GitHuba spoznial sie o godziny,
+  dlatego jedno uruchomienie workflow samo sprawdza oferty **co 5 minut przez ok. 5 h 40 min**
+  (krok "Sprawdzaj co 5 minut" w `.github/workflows/check.yml`). Cron co godzine dba tylko o to,
+  zeby w kolejce czekalo nastepne uruchomienie - rusza od razu po poprzednim, wiec nie ma przerw.
+  Odstep zmienisz w linii `RESZTA=$((300 - ...))` (300 s = 5 min).
 - **Wazne przy odstepie co 1 minute - limit minut GitHub Actions.**
   Kazde uruchomienie jest liczone jako co najmniej 1 minuta zuzytego
   czasu Actions. Co minute = ok. 1440 uruchomien/dobe = ok. 1440 minut

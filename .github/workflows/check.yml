@@ -2,17 +2,18 @@ name: Sprawdz oferty iPhone
 
 on:
   schedule:
-    # co 5 minut - to jest twardo wymuszone minimum GitHub Actions.
-    # "* * * * *" (co 1 min) NIE dziala mimo poprawnej skladni - GitHub
-    # i tak egzekwuje odstep min. 5 minut, a przy duzym obciazeniu
-    # potrafi to jeszcze opoznic o kolejne kilka-kilkanascie minut.
-    - cron: "*/5 * * * *"
+    # Harmonogram GitHuba potrafi spóźniać się o godziny, dlatego jedno uruchomienie samo
+    # sprawdza oferty co 5 minut przez ~5 h 40 min (niżej, krok „Sprawdzaj co 5 minut”).
+    # Cron co godzinę tylko pilnuje, żeby w kolejce zawsze czekało następne uruchomienie –
+    # startuje od razu po zakończeniu poprzedniego, więc sprawdzanie idzie bez przerw.
+    - cron: "7 * * * *"
   workflow_dispatch: {}  # pozwala odpalic recznie z zakladki Actions
 
 permissions:
   contents: write  # potrzebne, zeby workflow mogl zapisac seen_ids.json
 
 # Jedno uruchomienie naraz - dwa rownolegle nadpisywalyby sobie seen_ids.json.
+# Kolejne czeka w kolejce (GitHub trzyma jedno oczekujace) i rusza po zakonczeniu biezacego.
 concurrency:
   group: sprawdz-oferty
   cancel-in-progress: false
@@ -20,6 +21,12 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
+    timeout-minutes: 355  # limit GitHuba to 6 h na zadanie
+    env:
+      DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+      # Opcjonalnie: zakladka "Okazje" w panelu SmartCore (token uslugi Cloudflare Access)
+      CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+      CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
     steps:
       - uses: actions/checkout@v4
 
@@ -39,25 +46,31 @@ jobs:
       - name: Zainstaluj przegladarke Chromium (Playwright)
         run: playwright install --with-deps chromium
 
-      - name: Sprawdz nowe oferty i wyslij na Discorda
-        env:
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          # Opcjonalnie: zakladka "Okazje" w panelu SmartCore (token uslugi Cloudflare Access)
-          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
-          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
-        run: python check_offers.py
-
-      - name: Zapisz stan (seen_ids.json)
+      - name: Sprawdzaj co 5 minut
         run: |
           git config user.name "offer-bot"
           git config user.email "offer-bot@users.noreply.github.com"
-          git add seen_ids.json
-          git diff --cached --quiet || git commit -m "Aktualizacja listy widzianych ofert"
-          # Jesli w trakcie dzialania bota ktos wypchnal zmiany (np. nowy kod),
-          # dociagamy je i wypychamy ponownie. Przy konflikcie w seen_ids.json
-          # wygrywa wersja z tego uruchomienia (-X theirs = nasz commit).
-          for i in 1 2 3; do
-            git pull --rebase -X theirs origin "${GITHUB_REF_NAME}" && git push && exit 0
-            sleep 5
+
+          # Zapis seen_ids.json po kazdym sprawdzeniu. Jesli w miedzyczasie ktos wypchnal zmiany
+          # (np. nowy kod), dociagamy je – przy konflikcie w seen_ids.json wygrywa wersja z bota.
+          zapisz() {
+            git add seen_ids.json
+            git diff --cached --quiet && return 0
+            git commit -q -m "Aktualizacja listy widzianych ofert"
+            for i in 1 2 3; do
+              git pull -q --rebase -X theirs origin "${GITHUB_REF_NAME}" && git push -q && return 0
+              sleep 5
+            done
+            echo "::warning::Nie udalo sie zapisac seen_ids.json - sprobuje przy nastepnym sprawdzeniu"
+          }
+
+          KONIEC=$((SECONDS + 340 * 60))   # ~5 h 40 min, zostaje zapas do limitu 6 h
+          while [ $SECONDS -lt $KONIEC ]; do
+            START=$SECONDS
+            echo "::group::Sprawdzenie $(date -u '+%H:%M') UTC"
+            timeout 280 python check_offers.py || echo "::warning::To sprawdzenie sie nie udalo - kolejne za chwile"
+            zapisz
+            echo "::endgroup::"
+            RESZTA=$((300 - (SECONDS - START)))
+            if [ $RESZTA -gt 0 ]; then sleep $RESZTA; fi
           done
-          exit 1
