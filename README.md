@@ -62,7 +62,8 @@ Discorda.
   dlatego jedno uruchomienie workflow samo sprawdza oferty **co 5 minut przez ok. 5 h 40 min**
   (krok "Sprawdzaj co 5 minut" w `.github/workflows/check.yml`). Cron co godzine dba tylko o to,
   zeby w kolejce czekalo nastepne uruchomienie - rusza od razu po poprzednim, wiec nie ma przerw.
-  Odstep zmienisz w linii `RESZTA=$((300 - ...))` (300 s = 5 min).
+  Odstep zmienisz w linii `RESZTA=$((300 - ...))` (300 s = 5 min). Bot dziala tylko **9:00-22:00
+  czasu polskiego** (zmienne `OD` i `DO` w tym samym kroku), w nocy nic nie sprawdza.
 - **Wazne przy odstepie co 1 minute - limit minut GitHub Actions.**
   Kazde uruchomienie jest liczone jako co najmniej 1 minuta zuzytego
   czasu Actions. Co minute = ok. 1440 uruchomien/dobe = ok. 1440 minut
