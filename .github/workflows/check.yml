@@ -37,6 +37,9 @@ jobs:
       - name: Sprawdz nowe oferty i wyslij na Discorda
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          # Opcjonalnie: zakladka "Okazje" w panelu SmartCore (token uslugi Cloudflare Access)
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: python check_offers.py
 
       - name: Zapisz stan (seen_ids.json)

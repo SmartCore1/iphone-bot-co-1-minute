@@ -27,6 +27,13 @@ import requests
 from curl_cffi import requests as curl_requests
 
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
+
+# Dashboard SmartCore (zakladka "Okazje"). Opcjonalne - bez tych sekretow bot
+# dziala jak wczesniej (tylko Discord). Logowanie tokenem uslugi Cloudflare
+# Access (Zero Trust -> Access -> Service credentials).
+DASHBOARD_URL = os.environ.get("DASHBOARD_URL", "https://smartcore-panel.pages.dev").rstrip("/")
+CF_ACCESS_CLIENT_ID = os.environ.get("CF_ACCESS_CLIENT_ID")
+CF_ACCESS_CLIENT_SECRET = os.environ.get("CF_ACCESS_CLIENT_SECRET")
 SEEN_FILE = "seen_ids.json"
 MAX_SEEN_PER_SOURCE = 800
 
@@ -286,10 +293,13 @@ def send_discord(offer):
         return
 
     price_txt = f"{offer['price']} zl" if offer["price"] else "brak ceny w ogloszeniu"
+    description = f"**{price_txt}**\n{offer['label']} - {offer['source']}"
+    if offer.get("in_dashboard"):
+        description += f"\n[📥 W panelu: Okazje]({DASHBOARD_URL}/#okazje)"
     embed = {
         "title": offer["title"][:250],
         "url": offer["url"],
-        "description": f"**{price_txt}**\n{offer['label']} - {offer['source']}",
+        "description": description,
         "color": 5793266,
     }
     if offer.get("image"):
@@ -302,6 +312,57 @@ def send_discord(offer):
     except Exception as e:
         print(f"Blad wysylki do Discorda: {e}")
     time.sleep(1)  # zapas na limit webhookow Discorda
+
+
+def _to_float(value):
+    try:
+        return float(str(value).replace(",", ".")) if value not in (None, "") else None
+    except ValueError:
+        return None
+
+
+def send_dashboard(offers):
+    """
+    Wysyla nowe oferty do zakladki "Okazje" w panelu SmartCore (POST /api/deals).
+    Zwraca True, jesli sie udalo. Gdy brak sekretow - nic nie robi (tylko Discord).
+    """
+    if not offers:
+        return False
+    if not (CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET):
+        print("Brak CF_ACCESS_CLIENT_ID/SECRET - pomijam wysylke do panelu")
+        return False
+    payload = {
+        "deals": [
+            {
+                "id": o["id"],
+                "source": o["source"],
+                "label": o["label"],
+                "title": o["title"][:300],
+                "url": o["url"],
+                "image": o.get("image"),
+                "price": _to_float(o.get("price")),
+            }
+            for o in offers
+        ]
+    }
+    headers = {
+        "CF-Access-Client-Id": CF_ACCESS_CLIENT_ID,
+        "CF-Access-Client-Secret": CF_ACCESS_CLIENT_SECRET,
+        "Content-Type": "application/json",
+    }
+    try:
+        # Paczkami po 100 (API przyjmuje max 200 naraz).
+        for i in range(0, len(payload["deals"]), 100):
+            chunk = {"deals": payload["deals"][i:i + 100]}
+            r = requests.post(f"{DASHBOARD_URL}/api/deals", json=chunk, headers=headers, timeout=20, allow_redirects=False)
+            if r.status_code >= 300:
+                print(f"Panel error {r.status_code}: {r.text[:300]}")
+                return False
+        print(f"Panel: zapisano {len(offers)} okazji")
+        return True
+    except Exception as e:
+        print(f"Blad wysylki do panelu: {e}")
+        return False
 
 
 def main():
@@ -339,6 +400,10 @@ def main():
     # Wysylamy od najstarszej do najnowszej, zeby kolejnosc wiadomosci na
     # Discordzie byla chronologiczna (najnowsza oferta na koncu/na dole).
     all_new.sort(key=lambda o: o.get("created") or "")
+    # Najpierw do panelu (zeby wiadomosc na Discordzie mogla linkowac do "Okazji").
+    if send_dashboard(all_new):
+        for offer in all_new:
+            offer["in_dashboard"] = True
     for offer in all_new:
         send_discord(offer)
 

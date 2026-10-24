@@ -82,3 +82,26 @@ Discorda.
   dla osobistego uzytku (dokladnie tak dzialaja komercyjne serwisy typu
   Webmon/LZX), ale warto o tym pamietac przy duzej czestotliwosci
   zapytan - 10 minut to bezpieczny, "grzeczny" odstep.
+
+## Panel SmartCore — zakladka "Okazje" (opcjonalnie)
+
+Bot moze wysylac nowe ogloszenia rowniez do panelu SmartCore (zakladka
+**Okazje**), gdzie oznaczasz je jako *negocjuje / dogadane / kupione /
+odpusc / to nie deal*, a "Kupione" od razu dodaje rzecz do magazynu.
+Wazne zmiany (dogadane, wymaga decyzji, kupione) panel sam wysyla na
+Discorda. Wiadomosci o nowych ofertach na Discordzie dostaja link
+"📥 W panelu: Okazje".
+
+Konfiguracja (raz):
+
+1. Cloudflare Zero Trust -> Access -> **Service credentials** -> *Create
+   service token* (np. "bot-alertow"). Skopiuj **Client ID** i **Client
+   Secret** (secret widac tylko raz).
+2. W aplikacji Access "magazyn-resell" dodaj polityke **Service Auth**,
+   ktora wpuszcza ten token.
+3. W tym repo -> Settings -> Secrets and variables -> Actions dodaj
+   sekrety `CF_ACCESS_CLIENT_ID` i `CF_ACCESS_CLIENT_SECRET`.
+4. W panelu (wrangler.jsonc obu aplikacji) ustaw `BOT_CLIENT_ID` na
+   Client ID tokenu - wtedy dane bota trafiaja na Twoje konto.
+
+Bez tych sekretow bot dziala jak wczesniej (tylko Discord).
