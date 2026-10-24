@@ -58,8 +58,33 @@ ACCESSORY_EXCLUDE = (
     # akcesorium (etui/szkło), nawet jesli nie ma slowa "etui" w tytule
     r"spigen|tech-?protect|uniq\b|ringke|nillkin|crong|alogy|3mk|"
     r"mercury\b|forcell|wozinsky|puro\b|esr\b|karl\s*lagerfeld|"
-    r"guess\b|ferrari\b|ugreen|baseus|joyroom"
+    r"guess\b|ferrari\b|ugreen|baseus|joyroom|mobilfox|\buag\b|otterbox|"
+    # pudelka, plecki, zestawy ochronne, naklejki
+    r"pude[łl]k|\bbox\b|doboz|krabic|plecki|zestaw\s+(do|ochron)|naklejk|"
+    r"sticker|\bskin\b|ochraniacz|protector|bumper|\bcover\b|"
+    # Vinted pokazuje ogloszenia z calej Europy - etui w innych jezykach:
+    # tok/mobiltok (HU), maskica (HR), kryt/obal/pouzdro (CZ/SK),
+    # husa (RO), deklas/dekliukas (LT)
+    r"(mobil)?tok\b|tokok|maskic|\bkryt\b|\bobal\b|hus[ăa]|d[eė]kl|pouzdr"
 )
+
+# Gry i akcesoria do konsol. Odrzucane TYLKO, gdy w tytule nie ma wyraznie
+# konsoli (CONSOLE_KEEP) - dzieki temu "PS4 Slim 500GB + 2 gry" zostaje.
+CONSOLE_GAMES = (
+    r"\bgra\b|\bgry\b|\bgame\b|games|žaidim|\bhra\b|\bjoc\b|játék|\bspiel|"
+    r"edition|day one|wersj[aai] j[eę]zykow|polska wersja|\bpl\b|dubbing|"
+    r"napisy|p[łl]yt[aey]|\bdisc\b|kierownic|kormány|ped[aá]l|\bstand\b|"
+    r"podstawk|ch[łl]odz|cooling|kamera|camera|\bmove\b|\bvr\b|headset|"
+    r"lego dimensions"
+)
+CONSOLE_KEEP = re.compile(
+    r"konsol|console|\bslim\b|\bfat\b|\d+\s?(gb|tb)\b|cuh-?\d", re.IGNORECASE
+)
+
+# Minimalna cena, zeby ogloszenie trafilo do zakladki "Okazje" w panelu
+# (Discord dostaje wszystko jak wczesniej). Ponizej tego to prawie zawsze
+# etui, pudelko albo gra.
+DASHBOARD_MIN_PRICE = {"iPhone": 300, "PS4": 150, "PS3": 80}
 
 # Dodatkowe wykluczenia typowe dla konsol - same gry/pady/piloty, bez
 # samej konsoli, nas nie interesuja. Bez koncowego \b przy pad/kontroler/
@@ -87,6 +112,7 @@ PROFILES = [
         "exclude": re.compile(
             ACCESSORY_EXCLUDE + "|" + CONSOLE_EXTRA_EXCLUDE, re.IGNORECASE
         ),
+        "soft_exclude": re.compile(CONSOLE_GAMES, re.IGNORECASE),
     },
     {
         "key": "ps4",
@@ -96,6 +122,7 @@ PROFILES = [
         "exclude": re.compile(
             ACCESSORY_EXCLUDE + "|" + CONSOLE_EXTRA_EXCLUDE, re.IGNORECASE
         ),
+        "soft_exclude": re.compile(CONSOLE_GAMES, re.IGNORECASE),
     },
 ]
 
@@ -122,6 +149,9 @@ def passes_filters(title, profile):
     if not profile["include"].search(title):
         return False
     if profile["exclude"].search(title):
+        return False
+    soft = profile.get("soft_exclude")
+    if soft and soft.search(title) and not CONSOLE_KEEP.search(title):
         return False
     return True
 
@@ -324,13 +354,20 @@ def _to_float(value):
 def send_dashboard(offers):
     """
     Wysyla nowe oferty do zakladki "Okazje" w panelu SmartCore (POST /api/deals).
-    Zwraca True, jesli sie udalo. Gdy brak sekretow - nic nie robi (tylko Discord).
+    Do panelu ida tylko oferty od minimalnej ceny (DASHBOARD_MIN_PRICE) -
+    telefony i konsole, bez etui/gier za kilkadziesiat zlotych.
+    Zwraca zbior id wyslanych ofert (pusty, gdy brak sekretow albo blad).
     """
+    offers = [
+        o for o in offers
+        if _to_float(o.get("price")) is None
+        or _to_float(o.get("price")) >= DASHBOARD_MIN_PRICE.get(o.get("label"), 0)
+    ]
     if not offers:
-        return False
+        return set()
     if not (CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET):
         print("Brak CF_ACCESS_CLIENT_ID/SECRET - pomijam wysylke do panelu")
-        return False
+        return set()
     payload = {
         "deals": [
             {
@@ -357,12 +394,12 @@ def send_dashboard(offers):
             r = requests.post(f"{DASHBOARD_URL}/api/deals", json=chunk, headers=headers, timeout=20, allow_redirects=False)
             if r.status_code >= 300:
                 print(f"Panel error {r.status_code}: {r.text[:300]}")
-                return False
+                return set()
         print(f"Panel: zapisano {len(offers)} okazji")
-        return True
+        return {o["id"] for o in offers}
     except Exception as e:
         print(f"Blad wysylki do panelu: {e}")
-        return False
+        return set()
 
 
 def main():
@@ -401,9 +438,9 @@ def main():
     # Discordzie byla chronologiczna (najnowsza oferta na koncu/na dole).
     all_new.sort(key=lambda o: o.get("created") or "")
     # Najpierw do panelu (zeby wiadomosc na Discordzie mogla linkowac do "Okazji").
-    if send_dashboard(all_new):
-        for offer in all_new:
-            offer["in_dashboard"] = True
+    sent_ids = send_dashboard(all_new)
+    for offer in all_new:
+        offer["in_dashboard"] = offer["id"] in sent_ids
     for offer in all_new:
         send_discord(offer)
 
