@@ -69,31 +69,39 @@ ACCESSORY_EXCLUDE = (
     r"(mobil)?tok\b|tokok|maskic|\bkryt\b|\bobal\b|hus[ăa]|d[eė]kl|pouzdr"
 )
 
-# Gry i akcesoria do konsol. Odrzucane TYLKO, gdy w tytule nie ma wyraznie
-# konsoli (CONSOLE_KEEP) - dzieki temu "PS4 Slim 500GB + 2 gry" zostaje.
-CONSOLE_GAMES = (
-    r"\bgra\b|\bgry\b|\bgame\b|games|žaidim|\bhra\b|\bjoc\b|játék|\bspiel|"
-    r"edition|day one|wersj[aai] j[eę]zykow|polska wersja|\bpl\b|dubbing|"
-    r"napisy|p[łl]yt[aey]|\bdisc\b|kierownic|kormány|ped[aá]l|\bstand\b|"
-    r"podstawk|ch[łl]odz|cooling|kamera|camera|\bmove\b|\bvr\b|headset|"
-    r"lego dimensions"
+# --- Konsole: przepuszczamy TYLKO konsole, nie gry ------------------------
+# Gier jest za duzo (i w wielu jezykach), zeby je wszystkie wykluczac, wiec
+# dzialamy odwrotnie: ogloszenie PS3/PS4 przechodzi, gdy wyraznie chodzi o
+# konsole. Kolejnosc w console_ok():
+#   1. CONSOLE_STRONG (konsola, slim, 500GB, CUH-xxxx...) -> konsola, nawet z padami/grami
+#   2. CONSOLE_CONTROLLER (pad, DualShock, Victrix...)  -> sam pad, odrzucamy
+#   3. "pro" albo sam napis "PS4" / "Sony PlayStation 4"  -> konsola
+#   4. wszystko inne (tytul gry, kolekcja, "spel", "jocuri") -> odrzucamy
+CONSOLE_STRONG = re.compile(
+    r"konsol|console|konzol|\bslim\b|\bfat\b|\d+\s?(gb|tb)\b|cuh-?\d|cech-?\d",
+    re.IGNORECASE,
 )
-CONSOLE_KEEP = re.compile(
-    r"konsol|console|\bslim\b|\bfat\b|\d+\s?(gb|tb)\b|cuh-?\d", re.IGNORECASE
+CONSOLE_CONTROLLER = re.compile(
+    r"\bpad\w*|dualshock|dualsense|kontroler|controller|joysti|gamepad|"
+    r"victrix|\bpdp\b|kierownic|\bpilot",
+    re.IGNORECASE,
 )
+CONSOLE_WEAK = re.compile(r"\bpro\b", re.IGNORECASE)
+_CONSOLE_NAME = re.compile(r"playstation|ps\s?[34]|sony|[^a-ząćęłńóśźż0-9]", re.IGNORECASE)
+
+
+def console_ok(title):
+    if CONSOLE_STRONG.search(title):
+        return True
+    if CONSOLE_CONTROLLER.search(title):
+        return False
+    # Po wycieciu "PlayStation 4"/"PS4"/"Sony" i znakow nic nie zostaje = sama konsola.
+    return bool(CONSOLE_WEAK.search(title)) or len(_CONSOLE_NAME.sub("", title)) <= 3
 
 # Minimalna cena, zeby ogloszenie trafilo do zakladki "Okazje" w panelu
 # (Discord dostaje wszystko jak wczesniej). Ponizej tego to prawie zawsze
 # etui, pudelko albo gra.
 DASHBOARD_MIN_PRICE = {"iPhone": 300, "PS4": 150, "PS3": 80}
-
-# Dodatkowe wykluczenia typowe dla konsol - same gry/pady/piloty, bez
-# samej konsoli, nas nie interesuja. Bez koncowego \b przy pad/kontroler/
-# pilot, zeby lapac tez polskie odmiany ("pada", "pady", "padow",
-# "kontrolera"). Celowo NIE wykluczamy "gier" (liczba mnoga dopelniacza) -
-# to psuloby ogloszenia typu "konsola + 20 gier", ktore SA tym czego
-# szukamy; wykluczamy tylko wyrazna sprzedaz samej gry/gier w mianowniku.
-CONSOLE_EXTRA_EXCLUDE = r"\bgra\b|\bgry\b|\bpad\w*|kontroler|\bpilot"
 
 PROFILES = [
     {
@@ -110,20 +118,16 @@ PROFILES = [
         "label": "PS3",
         "query": "ps3",
         "include": re.compile(r"\bps\s?3\b|playstation\s?3\b", re.IGNORECASE),
-        "exclude": re.compile(
-            ACCESSORY_EXCLUDE + "|" + CONSOLE_EXTRA_EXCLUDE, re.IGNORECASE
-        ),
-        "soft_exclude": re.compile(CONSOLE_GAMES, re.IGNORECASE),
+        "exclude": re.compile(ACCESSORY_EXCLUDE, re.IGNORECASE),
+        "console_only": True,
     },
     {
         "key": "ps4",
         "label": "PS4",
         "query": "ps4",
         "include": re.compile(r"\bps\s?4\b|playstation\s?4\b", re.IGNORECASE),
-        "exclude": re.compile(
-            ACCESSORY_EXCLUDE + "|" + CONSOLE_EXTRA_EXCLUDE, re.IGNORECASE
-        ),
-        "soft_exclude": re.compile(CONSOLE_GAMES, re.IGNORECASE),
+        "exclude": re.compile(ACCESSORY_EXCLUDE, re.IGNORECASE),
+        "console_only": True,
     },
 ]
 
@@ -151,10 +155,34 @@ def passes_filters(title, profile):
         return False
     if profile["exclude"].search(title):
         return False
-    soft = profile.get("soft_exclude")
-    if soft and soft.search(title) and not CONSOLE_KEEP.search(title):
+    if profile.get("console_only") and not console_ok(title):
         return False
     return True
+
+
+def olx_price(item):
+    """
+    Cena z ogloszenia OLX. API trzyma ja w params: {"key": "price",
+    "value": {"value": 2300, "label": "2 300 zł"}} - nie w polu "price".
+    Zwraca liczbe albo None (np. "Zamienię" / "Oddam za darmo").
+    """
+    for p in item.get("params") or []:
+        if p.get("key") != "price":
+            continue
+        v = p.get("value") or {}
+        if isinstance(v.get("value"), (int, float)):
+            return v["value"]
+        digits = re.sub(r"[^\d,]", "", str(v.get("label") or "")).replace(",", ".")
+        try:
+            return float(digits) if digits else None
+        except ValueError:
+            return None
+    # Zapas na wypadek zmiany API: stary format {"price": {"value": {...}}}
+    price_raw = item.get("price")
+    if isinstance(price_raw, dict):
+        inner = price_raw.get("value")
+        return inner.get("value") if isinstance(inner, dict) else inner
+    return None
 
 
 def fetch_olx(profile):
@@ -186,11 +214,7 @@ def fetch_olx(profile):
         if not passes_filters(title, profile):
             continue
 
-        price_raw = item.get("price")
-        price_value = None
-        if isinstance(price_raw, dict):
-            inner = price_raw.get("value")
-            price_value = inner.get("value") if isinstance(inner, dict) else inner
+        price_value = olx_price(item)
 
         photos = item.get("photos") or []
         image = photos[0].get("link") if photos else None
@@ -359,11 +383,11 @@ def send_dashboard(offers):
     telefony i konsole, bez etui/gier za kilkadziesiat zlotych.
     Zwraca zbior id wyslanych ofert (pusty, gdy brak sekretow albo blad).
     """
-    offers = [
-        o for o in offers
-        if _to_float(o.get("price")) is None
-        or _to_float(o.get("price")) >= DASHBOARD_MIN_PRICE.get(o.get("label"), 0)
-    ]
+    def price_ok(o):
+        price = _to_float(o.get("price"))
+        return price is None or price >= DASHBOARD_MIN_PRICE.get(o.get("label"), 0)
+
+    offers = [o for o in offers if price_ok(o)]
     if not offers:
         return set()
     if not (CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET):
