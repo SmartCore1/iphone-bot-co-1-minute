@@ -23,6 +23,7 @@ import os
 import re
 import json
 import time
+import random
 import requests
 from curl_cffi import requests as curl_requests
 
@@ -402,6 +403,122 @@ def send_dashboard(offers):
         return set()
 
 
+# --- Sprzatanie "Okazji": ogloszenia, ktore zniknely (sprzedane/usuniete) -----
+
+# Sprawdzamy tylko okazje w tych statusach. "dogadane" pomijamy celowo -
+# zniknięcie ogloszenia moze oznaczac, ze to wlasnie Ty je kupujesz.
+CLEANUP_STATUSES = "nowa,wyslano,negocjuje,uwaga"
+VINTED_CHECKS_PER_RUN = 12  # strona Vinted wymaga przegladarki - sprawdzamy po troche
+GONE_REASON = "Ogłoszenie niedostępne (sprzedane, zarezerwowane lub usunięte) – zdjęte z Okazji automatycznie."
+
+
+def _dashboard_headers():
+    return {
+        "CF-Access-Client-Id": CF_ACCESS_CLIENT_ID,
+        "CF-Access-Client-Secret": CF_ACCESS_CLIENT_SECRET,
+        "Content-Type": "application/json",
+    }
+
+
+def fetch_open_deals():
+    r = requests.get(
+        f"{DASHBOARD_URL}/api/deals",
+        params={"status": CLEANUP_STATUSES, "limit": 500},
+        headers=_dashboard_headers(),
+        timeout=20,
+        allow_redirects=False,
+    )
+    if r.status_code != 200:
+        print(f"Panel (lista okazji) error {r.status_code}: {r.text[:200]}")
+        return []
+    return r.json().get("deals", [])
+
+
+def olx_is_gone(native_id):
+    """True = ogloszenia juz nie ma, False = jest, None = nie wiadomo (blad)."""
+    try:
+        resp = curl_requests.get(
+            f"https://www.olx.pl/api/v1/offers/{native_id}/",
+            headers=HEADERS,
+            timeout=20,
+            impersonate="chrome124",
+        )
+    except Exception as e:
+        print(f"[OLX/sprawdzanie {native_id}] blad: {e}")
+        return None
+    if resp.status_code in (404, 410):
+        return True
+    if resp.status_code != 200:
+        return None
+    try:
+        status = (resp.json().get("data") or {}).get("status")
+    except Exception:
+        return None
+    return status is not None and status != "active"
+
+
+def vinted_gone_ids(deals):
+    """
+    Sprawdza strony przedmiotow Vinted w prawdziwej przegladarce.
+    Dostepny przedmiot ma przycisk "Kup teraz" albo "Zaproponuj cene";
+    sprzedany/zarezerwowany ich nie ma, usuniety daje 404.
+    """
+    from playwright.sync_api import sync_playwright
+
+    gone = set()
+    try:
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch(headless=True)
+            page = browser.new_context(
+                user_agent=HEADERS["User-Agent"], locale="pl-PL",
+                viewport={"width": 1366, "height": 900},
+            ).new_page()
+            for d in deals:
+                url = d.get("url") or f"https://www.vinted.pl/items/{d['id'].split('_', 1)[1]}"
+                try:
+                    resp = page.goto(url, timeout=30000, wait_until="domcontentloaded")
+                    if resp is not None and resp.status in (404, 410):
+                        gone.add(d["id"])
+                        continue
+                    # Czekamy na cene - jesli jej nie ma, strona sie nie zaladowala
+                    # (np. blokada) i NIE uznajemy ogloszenia za zniknięte.
+                    page.wait_for_selector('[data-testid="item-price"]', timeout=12000)
+                    available = page.query_selector(
+                        '[data-testid="item-buy-button"], [data-testid="item-buyer-offer-button"]'
+                    )
+                    if not available:
+                        gone.add(d["id"])
+                except Exception as e:
+                    print(f"[Vinted/sprawdzanie {d['id']}] pomijam: {e}")
+            browser.close()
+    except Exception as e:
+        print(f"[Vinted/sprawdzanie] blad przegladarki: {e}")
+    return gone
+
+
+def cleanup_unavailable():
+    """Zdejmuje z Okazji ogloszenia, ktorych juz nie ma na OLX/Vinted."""
+    if not (CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET):
+        return
+    try:
+        deals = fetch_open_deals()
+        gone = set()
+        for d in deals:
+            if d["id"].startswith("olx_") and olx_is_gone(d["id"].split("_", 1)[1]):
+                gone.add(d["id"])
+        vinted = [d for d in deals if d["id"].startswith("vinted_")]
+        random.shuffle(vinted)
+        gone |= vinted_gone_ids(vinted[:VINTED_CHECKS_PER_RUN])
+        if gone:
+            body = {"deals": [{"id": i, "status": "zakonczone", "reason": GONE_REASON} for i in gone]}
+            r = requests.post(f"{DASHBOARD_URL}/api/deals", json=body, headers=_dashboard_headers(), timeout=20, allow_redirects=False)
+            print(f"Panel: zdjeto {len(gone)} niedostepnych okazji (HTTP {r.status_code})")
+        else:
+            print(f"Panel: sprawdzono {len(deals)} okazji - wszystkie dostepne")
+    except Exception as e:
+        print(f"Sprzatanie okazji nie powiodlo sie: {e}")
+
+
 def main():
     seen = load_seen()
     all_new = []
@@ -445,6 +562,7 @@ def main():
         send_discord(offer)
 
     save_seen(seen)
+    cleanup_unavailable()
     print(f"Gotowe. Wyslano {len(all_new)} nowych ofert.")
 
 
