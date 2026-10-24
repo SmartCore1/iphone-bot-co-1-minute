@@ -23,6 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 355  # limit GitHuba to 6 h na zadanie
     env:
+      PYTHONUNBUFFERED: "1"  # log z każdego sprawdzenia widać na bieżąco
       DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
       # Opcjonalnie: zakladka "Okazje" w panelu SmartCore (token uslugi Cloudflare Access)
       CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
