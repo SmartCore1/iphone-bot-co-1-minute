@@ -2,16 +2,18 @@ name: Sprawdz oferty iPhone
 
 on:
   schedule:
-    # Bot działa tylko 9:00–22:00 czasu polskiego (pilnuje tego krok „Sprawdzaj co 5 minut”).
-    # Harmonogram GitHuba potrafi spóźniać się o godziny, dlatego jedno uruchomienie samo
-    # sprawdza oferty co 5 minut aż do 22:00 (najdłużej ~5 h 40 min – limit GitHuba to 6 h).
-    # Cron co godzinę w ciągu dnia pilnuje, żeby w kolejce czekało następne uruchomienie.
+    # Bot działa tylko 9:00–22:00 czasu polskiego (pilnuje tego krok „Sprawdzaj co 10 minut”).
+    # Jedno uruchomienie samo sprawdza oferty co 10 minut aż do 22:00 (najdłużej ~5 h 40 min –
+    # limit GitHuba to 6 h), a na koniec samo odpala następne.
+    # Harmonogram GitHuba potrafi pomijać całe godziny (25.10 nie odpalił ani razu), więc
+    # próbuje co 15 minut – to tylko zapas na start rano i gdyby łańcuch się przerwał.
     # Godziny są w UTC: 7–20 UTC obejmuje 8–22 w Polsce i zimą, i latem; resztę odcina skrypt.
-    - cron: "7 7-20 * * *"
+    - cron: "*/15 7-20 * * *"
   workflow_dispatch: {}  # pozwala odpalic recznie z zakladki Actions
 
 permissions:
   contents: write  # potrzebne, zeby workflow mogl zapisac seen_ids.json
+  actions: write   # odpalenie kolejnego uruchomienia po limicie 6 h
 
 # Jedno uruchomienie naraz - dwa rownolegle nadpisywalyby sobie seen_ids.json.
 # Kolejne czeka w kolejce (GitHub trzyma jedno oczekujace) i rusza po zakonczeniu biezacego.
@@ -48,7 +50,9 @@ jobs:
       - name: Zainstaluj przegladarke Chromium (Playwright)
         run: playwright install --with-deps chromium
 
-      - name: Sprawdzaj co 5 minut
+      - name: Sprawdzaj co 10 minut
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           git config user.name "offer-bot"
           git config user.email "offer-bot@users.noreply.github.com"
@@ -89,6 +93,13 @@ jobs:
             timeout 280 python check_offers.py || echo "::warning::To sprawdzenie sie nie udalo - kolejne za chwile"
             zapisz
             echo "::endgroup::"
-            RESZTA=$((300 - (SECONDS - START)))
+            RESZTA=$((600 - (SECONDS - START)))   # 600 s = co 10 minut
             if [ $RESZTA -gt 0 ]; then sleep $RESZTA; fi
           done
+
+          # Skończył się limit czasu, a jest jeszcze przed 22:00 – od razu odpalamy następne
+          # uruchomienie, zamiast czekać na harmonogram GitHuba.
+          if [ "$(godzina)" -lt $DO ]; then
+            echo "Limit czasu jednego uruchomienia - odpalam nastepne."
+            gh workflow run check.yml --ref "${GITHUB_REF_NAME}" || echo "::warning::Nie udalo sie odpalic nastepnego - zrobi to harmonogram"
+          fi
