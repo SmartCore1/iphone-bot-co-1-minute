@@ -10,6 +10,10 @@ on:
     # Godziny są w UTC: 7–20 UTC obejmuje 8–22 w Polsce i zimą, i latem; resztę odcina skrypt.
     - cron: "*/15 7-20 * * *"
   workflow_dispatch: {}  # pozwala odpalic recznie z zakladki Actions
+  # Po zmianie kodu bota albo tego pliku startuje od razu (zapisy seen_ids.json przez bota tego nie robią).
+  push:
+    branches: [main]
+    paths: [".github/workflows/check.yml", "check_offers.py", "requirements.txt"]
 
 permissions:
   contents: write  # potrzebne, zeby workflow mogl zapisac seen_ids.json
