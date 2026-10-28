@@ -431,7 +431,7 @@ def send_dashboard(offers):
 
 # Sprawdzamy tylko okazje w tych statusach. "dogadane" pomijamy celowo -
 # zniknięcie ogloszenia moze oznaczac, ze to wlasnie Ty je kupujesz.
-CLEANUP_STATUSES = "nowa,wyslano,negocjuje,uwaga"
+CLEANUP_STATUSES = "nowa,wyslano,negocjuje,uwaga,do_negocjacji"
 VINTED_CHECKS_PER_RUN = 12  # strona Vinted wymaga przegladarki - sprawdzamy po troche
 GONE_REASON = "Ogłoszenie niedostępne (sprzedane, zarezerwowane lub usunięte) – zdjęte z Okazji automatycznie."
 
