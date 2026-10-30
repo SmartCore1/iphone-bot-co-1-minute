@@ -61,9 +61,9 @@ Discorda.
 - **Jak dziala harmonogram (od 24.10.2026).** Sam cron GitHuba spoznial sie o godziny,
   dlatego jedno uruchomienie workflow samo sprawdza oferty **co 10 minut przez ok. 5 h 40 min**
   (krok "Sprawdzaj co 10 minut" w `.github/workflows/check.yml`) i na koniec samo odpala
-  nastepne. Cron co 15 min w ciagu dnia to tylko zapas (25.10 GitHub pominal caly poranek).
-  Odstep zmienisz w linii `RESZTA=$((600 - ...))` (600 s = 10 min). Bot dziala tylko **9:00-22:00
-  czasu polskiego** (zmienne `OD` i `DO` w tym samym kroku), w nocy nic nie sprawdza.
+  nastepne. Cron co 15 min to tylko zapas, gdyby lancuch sie przerwal.
+  Odstep zmienisz w linii `RESZTA=$((600 - ...))` (600 s = 10 min). Bot dziala **cala dobe**;
+  zeby go zatrzymac, wylacz workflow w zakladce Actions.
 - **Wazne przy odstepie co 1 minute - limit minut GitHub Actions.**
   Kazde uruchomienie jest liczone jako co najmniej 1 minuta zuzytego
   czasu Actions. Co minute = ok. 1440 uruchomien/dobe = ok. 1440 minut

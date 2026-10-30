@@ -2,13 +2,10 @@ name: Sprawdz oferty iPhone
 
 on:
   schedule:
-    # Bot działa tylko 9:00–22:00 czasu polskiego (pilnuje tego krok „Sprawdzaj co 10 minut”).
-    # Jedno uruchomienie samo sprawdza oferty co 10 minut aż do 22:00 (najdłużej ~5 h 40 min –
-    # limit GitHuba to 6 h), a na koniec samo odpala następne.
-    # Harmonogram GitHuba potrafi pomijać całe godziny (25.10 nie odpalił ani razu), więc
-    # próbuje co 15 minut – to tylko zapas na start rano i gdyby łańcuch się przerwał.
-    # Godziny są w UTC: 7–20 UTC obejmuje 8–22 w Polsce i zimą, i latem; resztę odcina skrypt.
-    - cron: "*/15 7-20 * * *"
+    # Bot działa całą dobę: jedno uruchomienie sprawdza oferty co 10 minut przez ~5 h 40 min
+    # (limit GitHuba to 6 h), a na koniec samo odpala następne (krok „Odpal następne”).
+    # Harmonogram GitHuba potrafi pomijać wiele godzin, więc to tylko zapas, gdyby łańcuch się przerwał.
+    - cron: "*/15 * * * *"
   workflow_dispatch: {}  # pozwala odpalic recznie z zakladki Actions
   # Po zmianie kodu bota albo tego pliku startuje od razu (zapisy seen_ids.json przez bota tego nie robią).
   push:
@@ -55,8 +52,6 @@ jobs:
         run: playwright install --with-deps chromium
 
       - name: Sprawdzaj co 10 minut
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           git config user.name "offer-bot"
           git config user.email "offer-bot@users.noreply.github.com"
@@ -74,36 +69,24 @@ jobs:
             echo "::warning::Nie udalo sie zapisac seen_ids.json - sprobuje przy nastepnym sprawdzeniu"
           }
 
-          # Godziny pracy bota w Polsce (Europe/Warsaw sama uwzględnia czas letni i zimowy).
-          OD=9
-          DO=22
-          godzina() { echo $((10#$(TZ=Europe/Warsaw date '+%H'))); }
-
-          # Uruchomienie z 8:xx czeka do 9:00; poza godzinami pracy od razu się kończy.
-          if [ "$(godzina)" -eq $((OD - 1)) ]; then
-            DO_STARTU=$(( (60 - 10#$(TZ=Europe/Warsaw date '+%M')) * 60 ))
-            echo "Czekam do ${OD}:00 ($((DO_STARTU / 60)) min)"
-            sleep $DO_STARTU
-          fi
-          if [ "$(godzina)" -lt $OD ] || [ "$(godzina)" -ge $DO ]; then
-            echo "Poza godzinami pracy bota (${OD}:00-${DO}:00 w Polsce) - koniec."
-            exit 0
-          fi
-
           KONIEC=$((SECONDS + 340 * 60))   # ~5 h 40 min, zostaje zapas do limitu 6 h
-          while [ $SECONDS -lt $KONIEC ] && [ "$(godzina)" -lt $DO ]; do
+          while [ $SECONDS -lt $KONIEC ]; do
             START=$SECONDS
             echo "::group::Sprawdzenie $(date -u '+%H:%M') UTC"
             timeout 280 python check_offers.py || echo "::warning::To sprawdzenie sie nie udalo - kolejne za chwile"
-            zapisz
+            zapisz || echo "::warning::Blad zapisu seen_ids.json - sprobuje przy nastepnym sprawdzeniu"
             echo "::endgroup::"
             RESZTA=$((600 - (SECONDS - START)))   # 600 s = co 10 minut
             if [ $RESZTA -gt 0 ]; then sleep $RESZTA; fi
           done
 
-          # Skończył się limit czasu, a jest jeszcze przed 22:00 – od razu odpalamy następne
-          # uruchomienie, zamiast czekać na harmonogram GitHuba.
-          if [ "$(godzina)" -lt $DO ]; then
-            echo "Limit czasu jednego uruchomienia - odpalam nastepne."
-            gh workflow run check.yml --ref "${GITHUB_REF_NAME}" || echo "::warning::Nie udalo sie odpalic nastepnego - zrobi to harmonogram"
-          fi
+      # Także po błędzie wcześniejszego kroku, żeby łańcuch się nie urwał. Ręczne anulowanie go zatrzymuje.
+      - name: Odpal następne
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STAN: ${{ job.status }}
+        run: |
+          # Po błędzie chwila przerwy, żeby awaria nie odpalała uruchomień jedno za drugim.
+          if [ "$STAN" != "success" ]; then sleep 300; fi
+          gh workflow run check.yml --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME" || echo "::warning::Nie udalo sie odpalic nastepnego - zrobi to harmonogram"
