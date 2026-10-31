@@ -86,12 +86,20 @@ CONSOLE_CONTROLLER = re.compile(
     r"victrix|\bpdp\b|kierownic|\bpilot",
     re.IGNORECASE,
 )
+# "PS3 z padem", "PS3 + 2 pady", "PS4 i kontroler" to konsola w zestawie, a "Pad do PS3" juz nie.
+CONSOLE_WITH_PAD = re.compile(
+    r"(\bz\b|\bi\b|\boraz\b|\bplus\b|\+)\s*(\d+\s*)?(pad|kontroler|dualshock)|\bzestaw\b",
+    re.IGNORECASE,
+)
+ACCESSORY_FIRST = re.compile(r"\s*(pad|kontroler|controller|dualshock|joysti|gamepad|kierownic|pilot)", re.IGNORECASE)
 CONSOLE_WEAK = re.compile(r"\bpro\b", re.IGNORECASE)
 _CONSOLE_NAME = re.compile(r"playstation|ps\s?[34]|sony|[^a-ząćęłńóśźż0-9]", re.IGNORECASE)
 
 
 def console_ok(title):
-    if CONSOLE_STRONG.search(title):
+    if ACCESSORY_FIRST.match(title):
+        return False
+    if CONSOLE_STRONG.search(title) or CONSOLE_WITH_PAD.search(title):
         return True
     if CONSOLE_CONTROLLER.search(title):
         return False
