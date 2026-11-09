@@ -73,7 +73,7 @@ jobs:
           while [ $SECONDS -lt $KONIEC ]; do
             START=$SECONDS
             echo "::group::Sprawdzenie $(date -u '+%H:%M') UTC"
-            timeout 280 python check_offers.py || echo "::warning::To sprawdzenie sie nie udalo - kolejne za chwile"
+            timeout 570 python check_offers.py || echo "::warning::To sprawdzenie sie nie udalo albo przekroczylo 9,5 min - kolejne za chwile"
             zapisz || echo "::warning::Blad zapisu seen_ids.json - sprobuje przy nastepnym sprawdzeniu"
             echo "::endgroup::"
             RESZTA=$((600 - (SECONDS - START)))   # 600 s = co 10 minut
