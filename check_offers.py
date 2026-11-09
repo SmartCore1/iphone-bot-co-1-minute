@@ -117,6 +117,7 @@ def console_ok(title):
 DASHBOARD_MIN_PRICE = {
     "iPhone": 300, "PS4": 150, "PS3": 80,
     "PS5": 500, "Xbox": 80, "Nintendo Switch": 250, "Steam Deck": 800,
+    "iPad": 300, "Samsung Galaxy Tab": 200, "Nintendo 3DS": 120,
 }
 
 # --- Cennik skupu SmartCore (stan na 19.09.2026) --------------------------
@@ -124,7 +125,8 @@ DASHBOARD_MIN_PRICE = {
 # trafiaja tylko urzadzenia z tego cennika, ktorych cena w ogloszeniu to:
 #   <= cennik                    -> okazja (da sie zarobic od reki)
 #   <= cennik * (1 + MARGIN)     -> do stargowania w dol do ceny z cennika
-# Gry i sprzet spoza cennika (iPad, Galaxy Tab, 3DS...) ida tylko na Discorda.
+# Gry ida tylko na Discorda. Sprzet spoza tej tabeli (iPad, Galaxy Tab, 3DS, Xbox 360...) idzie do panelu,
+# ktory sprawdza cene w tabeli cen wtyczki (Wyceniacz) - bez ceny tam nie trafi do "Do zrobienia".
 # Przy zmianie cen w panelu zaktualizuj te tabele.
 NEGOTIATE_MARGIN = 0.15
 
@@ -242,7 +244,11 @@ def deal_ok(offer):
     if price is None or price < DASHBOARD_MIN_PRICE.get(offer.get("label"), 0):
         return False
     ref = reference_price(offer)
-    return ref is not None and price <= ref * (1 + NEGOTIATE_MARGIN)
+    if ref is None:
+        # Sprzetu nie ma w cenniku bota (iPad, Galaxy Tab, 3DS, Xbox 360...) - wysylamy do panelu,
+        # a ten sprawdza cene w tabeli cen wtyczki (bez ceny w tabeli nie trafi do "Do zrobienia").
+        return True
+    return price <= ref * (1 + NEGOTIATE_MARGIN)
 
 # Oznaczenia akcesorium na poczatku tytulu (np. "Apple Pencil 2 do iPada").
 TABLET_ACCESSORY_FIRST = (
