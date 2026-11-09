@@ -1,5 +1,6 @@
 """
-Bot sprawdzajacy nowe oferty (iPhone 11+, PS3, PS4) na OLX i Vinted
+Bot sprawdzajacy nowe oferty (iPhone 11+, iPad, Galaxy Tab, PS3/PS4/PS5,
+Xbox, Nintendo Switch/3DS, Steam Deck, gry) na OLX i Vinted
 i wysylajacy powiadomienia na Discorda (przez webhook).
 
 Uruchamiany cyklicznie przez GitHub Actions - patrz
@@ -36,7 +37,7 @@ DASHBOARD_URL = os.environ.get("DASHBOARD_URL", "https://smartcore-panel.pages.d
 CF_ACCESS_CLIENT_ID = os.environ.get("CF_ACCESS_CLIENT_ID")
 CF_ACCESS_CLIENT_SECRET = os.environ.get("CF_ACCESS_CLIENT_SECRET")
 SEEN_FILE = "seen_ids.json"
-MAX_SEEN_PER_SOURCE = 800
+MAX_SEEN_PER_SOURCE = 3000
 
 HEADERS = {
     "User-Agent": (
@@ -92,8 +93,12 @@ CONSOLE_WITH_PAD = re.compile(
     re.IGNORECASE,
 )
 ACCESSORY_FIRST = re.compile(r"\s*(pad|kontroler|controller|dualshock|joysti|gamepad|kierownic|pilot)", re.IGNORECASE)
-CONSOLE_WEAK = re.compile(r"\bpro\b", re.IGNORECASE)
-_CONSOLE_NAME = re.compile(r"playstation|ps\s?[34]|sony|[^a-ząćęłńóśźż0-9]", re.IGNORECASE)
+CONSOLE_WEAK = re.compile(r"\bpro\b|\boled\b|\blite\b", re.IGNORECASE)
+_CONSOLE_NAME = re.compile(
+    r"playstation|ps\s?[345]|sony|xbox|microsoft|series|\bone\b|\b[sx]\b|\bxl\b|\bnew\b|"
+    r"nintendo|switch|[23]ds|steam\s*deck|[^a-ząćęłńóśźż0-9]",
+    re.IGNORECASE,
+)
 
 
 def console_ok(title):
@@ -109,7 +114,18 @@ def console_ok(title):
 # Minimalna cena, zeby ogloszenie trafilo do zakladki "Okazje" w panelu
 # (Discord dostaje wszystko jak wczesniej). Ponizej tego to prawie zawsze
 # etui, pudelko albo gra.
-DASHBOARD_MIN_PRICE = {"iPhone": 300, "PS4": 150, "PS3": 80}
+DASHBOARD_MIN_PRICE = {
+    "iPhone": 300, "PS4": 150, "PS3": 80,
+    "PS5": 500, "Xbox": 80, "Nintendo Switch": 250, "Nintendo 3DS": 120,
+    "Steam Deck": 800, "iPad": 300, "Samsung Galaxy Tab": 200,
+    "Gra PS5": 20, "Gra PS4": 15, "Gra Xbox": 15, "Gra Switch": 20,
+}
+
+# Oznaczenia akcesorium na poczatku tytulu (np. "Apple Pencil 2 do iPada").
+TABLET_ACCESSORY_FIRST = (
+    r"^\s*(apple\s*)?(pencil|magic\s*keyboard|smart\s*(keyboard|folio))|"
+    r"^\s*(s\s*pen|klawiatur)"
+)
 
 PROFILES = [
     {
@@ -136,6 +152,98 @@ PROFILES = [
         "include": re.compile(r"\bps\s?4\b|playstation\s?4\b", re.IGNORECASE),
         "exclude": re.compile(ACCESSORY_EXCLUDE, re.IGNORECASE),
         "console_only": True,
+    },
+    {
+        "key": "ps5",
+        "label": "PS5",
+        "query": "ps5",
+        "include": re.compile(r"\bps\s?5\b|playstation\s?5\b", re.IGNORECASE),
+        "exclude": re.compile(ACCESSORY_EXCLUDE, re.IGNORECASE),
+        "console_only": True,
+    },
+    {
+        "key": "xbox",
+        "label": "Xbox",
+        "query": "xbox",
+        "include": re.compile(r"xbox", re.IGNORECASE),
+        "exclude": re.compile(ACCESSORY_EXCLUDE, re.IGNORECASE),
+        "console_only": True,
+    },
+    {
+        "key": "switch",
+        "label": "Nintendo Switch",
+        "query": "nintendo switch",
+        "include": re.compile(r"nintendo|\bswitch\s*(oled|lite|2)\b", re.IGNORECASE),
+        "exclude": re.compile(ACCESSORY_EXCLUDE, re.IGNORECASE),
+        "console_only": True,
+    },
+    {
+        "key": "3ds",
+        "label": "Nintendo 3DS",
+        "query": "nintendo 3ds",
+        "include": re.compile(r"\b[23]ds\b", re.IGNORECASE),
+        "exclude": re.compile(ACCESSORY_EXCLUDE, re.IGNORECASE),
+        "console_only": True,
+    },
+    {
+        "key": "steamdeck",
+        "label": "Steam Deck",
+        "query": "steam deck",
+        "include": re.compile(r"steam\s*deck", re.IGNORECASE),
+        "exclude": re.compile(ACCESSORY_EXCLUDE + r"|\bdock\b", re.IGNORECASE),
+    },
+    {
+        "key": "ipad",
+        "label": "iPad",
+        "query": "ipad",
+        # iPad, Air, Pro, mini - wszystko z "ipad" w tytule.
+        "include": re.compile(r"\bi\s?pad\b", re.IGNORECASE),
+        "exclude": re.compile(
+            ACCESSORY_EXCLUDE + "|" + TABLET_ACCESSORY_FIRST, re.IGNORECASE
+        ),
+    },
+    {
+        "key": "galaxytab",
+        "label": "Samsung Galaxy Tab",
+        "query": "samsung galaxy tab",
+        "include": re.compile(r"galaxy\s*tab|\btab\s*[sa]\d", re.IGNORECASE),
+        "exclude": re.compile(
+            ACCESSORY_EXCLUDE + "|" + TABLET_ACCESSORY_FIRST, re.IGNORECASE
+        ),
+    },
+    # Gry: pasuje platforma w tytule, a ogloszenie NIE wyglada na konsole ani
+    # pad (patrz console_ok) - czyli to co profile konsol odrzucily jako gre.
+    {
+        "key": "gry_ps5",
+        "label": "Gra PS5",
+        "query": "gra ps5",
+        "include": re.compile(r"\bps\s?5\b|playstation\s?5\b", re.IGNORECASE),
+        "exclude": re.compile(ACCESSORY_EXCLUDE, re.IGNORECASE),
+        "games_only": True,
+    },
+    {
+        "key": "gry_ps4",
+        "label": "Gra PS4",
+        "query": "gra ps4",
+        "include": re.compile(r"\bps\s?4\b|playstation\s?4\b", re.IGNORECASE),
+        "exclude": re.compile(ACCESSORY_EXCLUDE, re.IGNORECASE),
+        "games_only": True,
+    },
+    {
+        "key": "gry_xbox",
+        "label": "Gra Xbox",
+        "query": "gra xbox",
+        "include": re.compile(r"xbox", re.IGNORECASE),
+        "exclude": re.compile(ACCESSORY_EXCLUDE, re.IGNORECASE),
+        "games_only": True,
+    },
+    {
+        "key": "gry_switch",
+        "label": "Gra Switch",
+        "query": "gra nintendo switch",
+        "include": re.compile(r"nintendo|\bswitch\b", re.IGNORECASE),
+        "exclude": re.compile(ACCESSORY_EXCLUDE, re.IGNORECASE),
+        "games_only": True,
     },
 ]
 
@@ -164,6 +272,10 @@ def passes_filters(title, profile):
     if profile["exclude"].search(title):
         return False
     if profile.get("console_only") and not console_ok(title):
+        return False
+    if profile.get("games_only") and (
+        console_ok(title) or CONSOLE_CONTROLLER.search(title)
+    ):
         return False
     return True
 
@@ -370,6 +482,14 @@ def send_discord(offer):
 
     try:
         r = requests.post(DISCORD_WEBHOOK_URL, json={"embeds": [embed]}, timeout=15)
+        if r.status_code == 429:
+            # Limit webhooka (ok. 30 wiadomosci/min) - przy duzej partii czekamy i ponawiamy.
+            try:
+                wait = float(r.json().get("retry_after", 2))
+            except Exception:
+                wait = 2.0
+            time.sleep(wait + 0.5)
+            r = requests.post(DISCORD_WEBHOOK_URL, json={"embeds": [embed]}, timeout=15)
         if r.status_code >= 300:
             print(f"Discord error {r.status_code}: {r.text}")
     except Exception as e:
