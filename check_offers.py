@@ -120,135 +120,19 @@ DASHBOARD_MIN_PRICE = {
     "iPad": 300, "Samsung Galaxy Tab": 200, "Nintendo 3DS": 120,
 }
 
-# --- Cennik skupu SmartCore (stan na 19.09.2026) --------------------------
-# Ile maksymalnie placimy za sprawny sprzet w dobrym stanie. Do panelu "Okazje"
-# trafiaja tylko urzadzenia z tego cennika, ktorych cena w ogloszeniu to:
-#   <= cennik                    -> okazja (da sie zarobic od reki)
-#   <= cennik * (1 + MARGIN)     -> do stargowania w dol do ceny z cennika
-# Gry ida tylko na Discorda. Sprzet spoza tej tabeli (iPad, Galaxy Tab, 3DS, Xbox 360...) idzie do panelu,
-# ktory sprawdza cene w tabeli cen wtyczki (Wyceniacz) - bez ceny tam nie trafi do "Do zrobienia".
-# Przy zmianie cen w panelu zaktualizuj te tabele.
-NEGOTIATE_MARGIN = 0.15
-
-CENNIK_IPHONE = {
-    "iPhone SE": {"64GB": 250, "128GB": 300, "256GB": 350},
-    "iPhone 11": {"64GB": 250, "128GB": 300, "256GB": 350},
-    "iPhone 11 Pro": {"64GB": 300, "256GB": 400, "512GB": 450},
-    "iPhone 11 Pro Max": {"64GB": 350, "256GB": 450, "512GB": 550},
-    "iPhone 12 mini": {"64GB": 350, "128GB": 400, "256GB": 450},
-    "iPhone 12": {"64GB": 350, "128GB": 400, "256GB": 450},
-    "iPhone 12 Pro": {"128GB": 450, "256GB": 550, "512GB": 650},
-    "iPhone 12 Pro Max": {"128GB": 550, "256GB": 650, "512GB": 700},
-    "iPhone 13 mini": {"128GB": 500, "256GB": 600, "512GB": 650},
-    "iPhone 13": {"128GB": 500, "256GB": 600, "512GB": 700},
-    "iPhone 13 Pro": {"128GB": 700, "256GB": 850, "512GB": 950, "1TB": 1050},
-    "iPhone 13 Pro Max": {"128GB": 900, "256GB": 1000, "512GB": 1150, "1TB": 1250},
-    "iPhone 14": {"128GB": 650, "256GB": 750, "512GB": 900},
-    "iPhone 14 Plus": {"128GB": 750, "256GB": 900, "512GB": 1000},
-    "iPhone 14 Pro": {"128GB": 1050, "256GB": 1150, "512GB": 1300, "1TB": 1400},
-    "iPhone 14 Pro Max": {"128GB": 1150, "256GB": 1350, "512GB": 1450, "1TB": 1600},
-    "iPhone 15": {"128GB": 1100, "256GB": 1200, "512GB": 1350},
-    "iPhone 15 Plus": {"128GB": 1150, "256GB": 1300, "512GB": 1450},
-    "iPhone 15 Pro": {"128GB": 1400, "256GB": 1550, "512GB": 1800, "1TB": 2000},
-    "iPhone 15 Pro Max": {"256GB": 1750, "512GB": 2000, "1TB": 2200},
-    "iPhone 16e": {"128GB": 1000, "256GB": 1200, "512GB": 1350},
-    "iPhone 16": {"128GB": 1350, "256GB": 1600, "512GB": 1800},
-    "iPhone 16 Plus": {"128GB": 1550, "256GB": 1750, "512GB": 1950},
-    "iPhone 16 Pro": {"128GB": 1950, "256GB": 2050, "512GB": 2250, "1TB": 2450},
-    "iPhone 16 Pro Max": {"256GB": 2200, "512GB": 2500, "1TB": 2800},
-    "iPhone 17e": {"256GB": 1750, "512GB": 1950},
-    "iPhone 17": {"256GB": 2050, "512GB": 2400},
-    "iPhone Air": {"256GB": 1950, "512GB": 2200, "1TB": 2500},
-    "iPhone 17 Pro": {"256GB": 2850, "512GB": 3150, "1TB": 3500},
-    "iPhone 17 Pro Max": {"256GB": 3050, "512GB": 3300, "1TB": 3750},
-}
-
-_IPHONE_RE = re.compile(
-    r"iphone\s*(se|air|\d{2})\s*(e\b)?\s*(plus|mini|pro\s*max|pro)?", re.IGNORECASE
-)
-_STORAGE_RE = re.compile(r"(\d{2,4})\s?(gb|tb)\b", re.IGNORECASE)
+# --- Ceny: jedna tabela – tabela cen z wtyczki Resell (Wyceniacz) ------------
+# Bot nie ma wlasnego cennika. Kazda nowa oferta (bez gier, od minimalnej ceny) idzie do panelu,
+# a panel wycenia ja Twoja tabela cen z wtyczki (ta, ktora aktualizujesz analiza cen z Flip Raportow)
+# i odsyla wynik: cene z tabeli i czy to okazja (prog "Poza tabela / za drogie" ustawiasz w panelu).
+# Sprzet bez ceny w tabeli nie trafia do "Do zrobienia" - czeka w "Poza tabela / za drogie".
 
 
-def _iphone_reference(title):
-    m = _IPHONE_RE.search(title)
-    if not m:
-        return None
-    num, e, variant = m.group(1).lower(), m.group(2), (m.group(3) or "").lower()
-    variant = re.sub(r"\s+", "", variant)
-    if num == "air" or (re.search(r"\bair\b", title, re.IGNORECASE) and num in ("17", "18")):
-        key = "iPhone Air"
-    elif num == "se":
-        key = "iPhone SE"
-    else:
-        key = f"iPhone {num}" + ("e" if e else "")
-        key += {"plus": " Plus", "mini": " mini", "pro": " Pro", "promax": " Pro Max"}.get(variant, "")
-    prices = CENNIK_IPHONE.get(key)
-    if not prices:
-        return None
-    for amount, unit in _STORAGE_RE.findall(title):
-        storage = f"{int(amount)}{unit.upper()}"
-        if storage in prices:
-            return prices[storage]
-    # Pamiec nieznana - bierzemy najnizsza cene (ostrzejsze kryterium).
-    return min(prices.values())
-
-
-def reference_price(offer):
-    """Cena z cennika skupu dla oferty albo None, gdy sprzetu nie ma w cenniku."""
-    title = offer.get("title") or ""
-    label = offer.get("label")
-    t = title.lower()
-    if label == "iPhone":
-        return _iphone_reference(title)
-    if label == "PS5":
-        if re.search(r"\bpro\b", t):
-            return 3050
-        digital = "digital" in t
-        if re.search(r"\bslim\b", t):
-            return 1400 if digital else 1550
-        return 1200 if digital else 1300
-    if label == "PS4":
-        return 450 if re.search(r"\bpro\b", t) else 300
-    if label == "PS3":
-        return 200 if re.search(r"super\s*slim|\bslim\b", t) else 150
-    if label == "Xbox":
-        if re.search(r"series\s*x", t):
-            return 1450
-        if re.search(r"series\s*s", t):
-            return 650
-        if re.search(r"one\s*x\b", t):
-            return 450
-        if re.search(r"one\s*s\b", t):
-            return 300
-        if re.search(r"\bone\b", t):
-            return 200
-        return None  # np. Xbox 360 - brak w cenniku
-    if label == "Nintendo Switch":
-        if re.search(r"switch\s*2", t):
-            return 1100
-        if "oled" in t:
-            return 550
-        if "lite" in t:
-            return 350
-        return 400
-    if label == "Steam Deck":
-        return 1600 if "oled" in t else 1000
-    return None
-
-
-def deal_ok(offer):
-    """Czy oferta ma trafic do panelu "Okazje" (urzadzenie z cennika w dobrej cenie)."""
+def do_panelu(offer):
+    """Czy wyslac oferte do panelu do wyceny (gry i tanie akcesoria nie)."""
     if (offer.get("label") or "").startswith("Gra "):
         return False
     price = _to_float(offer.get("price"))
-    if price is None or price < DASHBOARD_MIN_PRICE.get(offer.get("label"), 0):
-        return False
-    ref = reference_price(offer)
-    if ref is None:
-        # Sprzetu nie ma w cenniku bota (iPad, Galaxy Tab, 3DS, Xbox 360...) - wysylamy do panelu,
-        # a ten sprawdza cene w tabeli cen wtyczki (bez ceny w tabeli nie trafi do "Do zrobienia").
-        return True
-    return price <= ref * (1 + NEGOTIATE_MARGIN)
+    return price is not None and price >= DASHBOARD_MIN_PRICE.get(offer.get("label"), 0)
 
 # Oznaczenia akcesorium na poczatku tytulu (np. "Apple Pencil 2 do iPada").
 TABLET_ACCESSORY_FIRST = (
@@ -598,12 +482,13 @@ def send_discord(offer):
 
     price_txt = f"{offer['price']} zl" if offer["price"] else "brak ceny w ogloszeniu"
     description = f"**{price_txt}**\n{offer['label']} - {offer['source']}"
-    ref = reference_price(offer)
+    # Cena z Twojej tabeli cen we wtyczce (wycenia panel przy zapisie oferty).
+    ref = (offer.get("wycena") or {}).get("tabela")
     price_num = _to_float(offer.get("price"))
     if ref and price_num:
         diff = round(ref - price_num)
         description += (
-            f"\nCennik skupu: {ref} zł ("
+            f"\nTabela cen: {ref} zł ("
             + (f"{diff} zł poniżej" if diff >= 0 else f"{-diff} zł powyżej")
             + ")"
         )
@@ -644,17 +529,17 @@ def _to_float(value):
 
 def send_dashboard(offers):
     """
-    Wysyla nowe oferty do zakladki "Okazje" w panelu SmartCore (POST /api/deals).
-    Do panelu ida tylko oferty od minimalnej ceny (DASHBOARD_MIN_PRICE) -
-    telefony i konsole, bez etui/gier za kilkadziesiat zlotych.
-    Zwraca zbior id wyslanych ofert (pusty, gdy brak sekretow albo blad).
+    Wysyla nowe oferty do panelu SmartCore (POST /api/deals), ktory wycenia je tabela cen z wtyczki.
+    Do panelu ida oferty od minimalnej ceny (DASHBOARD_MIN_PRICE), bez gier.
+    Zwraca slownik {id: wycena} z odpowiedzi panelu - wycena: {tabela, oferta, model, okazja}
+    (pusty, gdy brak sekretow albo blad).
     """
-    offers = [o for o in offers if deal_ok(o)]
+    offers = [o for o in offers if do_panelu(o)]
     if not offers:
-        return set()
+        return {}
     if not (CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET):
         print("Brak CF_ACCESS_CLIENT_ID/SECRET - pomijam wysylke do panelu")
-        return set()
+        return {}
     payload = {
         "deals": [
             {
@@ -674,6 +559,7 @@ def send_dashboard(offers):
         "CF-Access-Client-Secret": CF_ACCESS_CLIENT_SECRET,
         "Content-Type": "application/json",
     }
+    wyceny = {}
     try:
         # Paczkami po 50 (API przyjmuje max 200 naraz; mniejsze paczki = szybsza odpowiedz).
         for i in range(0, len(payload["deals"]), 50):
@@ -681,12 +567,17 @@ def send_dashboard(offers):
             r = requests.post(f"{DASHBOARD_URL}/api/deals", json=chunk, headers=headers, timeout=60, allow_redirects=False)
             if r.status_code >= 300:
                 print(f"Panel error {r.status_code}: {r.text[:300]}")
-                return set()
-        print(f"Panel: zapisano {len(offers)} okazji")
-        return {o["id"] for o in offers}
+                return wyceny
+            try:
+                wyceny.update(r.json().get("wyceny") or {})
+            except ValueError:
+                pass
+        okazji = sum(1 for w in wyceny.values() if w.get("okazja"))
+        print(f"Panel: zapisano {len(offers)} ofert, okazji wg tabeli cen: {okazji}")
+        return wyceny
     except Exception as e:
         print(f"Blad wysylki do panelu: {e}")
-        return set()
+        return wyceny
 
 
 # --- Sprzatanie "Okazji": ogloszenia, ktore zniknely (sprzedane/usuniete) -----
@@ -841,9 +732,11 @@ def main():
     # Discordzie byla chronologiczna (najnowsza oferta na koncu/na dole).
     all_new.sort(key=lambda o: o.get("created") or "")
     # Najpierw do panelu (zeby wiadomosc na Discordzie mogla linkowac do "Okazji").
-    sent_ids = send_dashboard(all_new)
+    wyceny = send_dashboard(all_new)
     for offer in all_new:
-        offer["in_dashboard"] = offer["id"] in sent_ids
+        offer["wycena"] = wyceny.get(offer["id"])
+        # Link "W panelu: Okazje" tylko przy okazjach wg tabeli cen (reszta czeka w "Poza tabela").
+        offer["in_dashboard"] = bool((offer["wycena"] or {}).get("okazja"))
     for offer in all_new:
         send_discord(offer)
 
